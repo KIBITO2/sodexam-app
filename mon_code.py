@@ -1,228 +1,188 @@
 import streamlit as st
 import pandas as pd
-import os
-import io
-import base64
-import smtplib
 import folium
-from datetime import datetime
 from streamlit_folium import st_folium
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
-from email.mime.application import MIMEApplication
+import os
+from datetime import datetime
 
-# ==========================================
-# 1. CONFIGURATION & FICHIERS
-# ==========================================
-FOLDER_DATA = "Donnees_Villes"
-DB_USERS = "utilisateurs.csv"
-LOGO_NOM = "logo_sodexam.png.png"
+# --- CONFIGURATION DE LA PAGE ---
+st.set_page_config(page_title="SODEXAM - Réseau National", layout="wide", page_icon="🌧️")
 
-# --- PARAMÈTRES EMAIL (À MODIFIER AVEC TON CODE GOOGLE) ---
-EMAIL_EXPEDITEUR = "votre_email@gmail.com"
-MOT_DE_PASSE = "xxxx xxxx xxxx xxxx" 
-EMAIL_DESTINATAIRE = "lateseraphinkone@gmail.com"
+# Création du dossier de stockage si absent
+if not os.path.exists("Donnees_Villes"):
+    os.makedirs("Donnees_Villes")
 
-# Coordonnées réelles des stations SODEXAM
-VILLES_COORDS = {
-    "abidjan": [5.3600, -4.0083],
-    "abengourou": [6.7300, -3.5000],
-    "yamoussoukro": [6.8161, -5.2742],
-    "bouake": [7.6897, -5.0303],
-    "korhogo": [9.4580, -5.6295],
-    "san-pedro": [4.7485, -6.6363],
-    "man": [7.4125, -7.5538],
-    "daoukro": [7.0591, -3.9631],
-    "ouele": [7.1000, -3.5833],
-    "daloa": [6.8773, -6.4502],
-    "odienne": [9.5051, -7.5643]
-}
+# --- FONCTIONS DE CHARGEMENT SÉCURISÉES ---
 
-if not os.path.exists(FOLDER_DATA): os.makedirs(FOLDER_DATA)
-
-if not os.path.exists(DB_USERS):
-    df_u = pd.DataFrame([{'login': 'admin', 'password': 'admin123', 'role': 'admin', 'ville': 'TOUTES'}])
-    df_u.to_csv(DB_USERS, index=False)
-
-# ==========================================
-# 2. FONCTIONS TECHNIQUES
-# ==========================================
-def get_base64(file):
-    if os.path.exists(file):
-        with open(file, 'rb') as f: return base64.b64encode(f.read()).decode()
-    return None
-
-def charger_donnees_ville(ville):
-    chemin = os.path.join(FOLDER_DATA, f"{ville.upper()}_data.csv")
-    if not os.path.exists(chemin):
-        return pd.DataFrame(columns=['Date', 'Heure', 'Ville', 'Pluie_mm', 'Orage', 'Eclair'])
-    return pd.read_csv(chemin)
-
-def charger_toutes_villes():
-    fichiers = [f for f in os.listdir(FOLDER_DATA) if f.endswith(".csv")]
-    all_dfs = []
-    for f in fichiers:
+def charger_utilisateurs():
+    nom_f = "utilisateurs.csv"
+    admin_defaut = pd.DataFrame({
+        "identifiant": ["admin"], 
+        "mot_de_passe": ["admin123"], 
+        "ville": ["Abidjan"], 
+        "role": ["admin"]
+    })
+    if os.path.exists(nom_f):
         try:
-            df_temp = pd.read_csv(os.path.join(FOLDER_DATA, f))
-            if not df_temp.empty: all_dfs.append(df_temp)
-        except: continue
-    return pd.concat(all_dfs, ignore_index=True) if all_dfs else pd.DataFrame()
+            # sep=None permet de détecter , ou ; automatiquement
+            df = pd.read_csv(nom_f, sep=None, engine='python')
+            if 'identifiant' in df.columns and 'mot_de_passe' in df.columns:
+                return df
+        except:
+            pass
+    # Si erreur ou fichier mal formé, on recrée un propre
+    admin_defaut.to_csv(nom_f, index=False)
+    return admin_defaut
 
-# ==========================================
-# 3. INTERFACE & AUTHENTIFICATION
-# ==========================================
-st.set_page_config(page_title="SODEXAM - Gestion Pluvio", layout="wide")
+def charger_villes_coords():
+    nom_f = "villes_ci.csv"
+    villes_defaut = pd.DataFrame({
+        "Ville": ["Abidjan", "Yamoussoukro", "Bouaké", "San-Pédro", "Korhogo", "Tabou", "Facobly"],
+        "Lat": [5.3096, 6.8276, 7.6934, 4.7485, 9.4580, 4.4229, 7.1869],
+        "Lon": [-4.0127, -5.2767, -5.0303, -6.6363, -5.6296, -7.3528, -7.4569]
+    })
+    if os.path.exists(nom_f):
+        try:
+            df = pd.read_csv(nom_f, sep=None, engine='python')
+            if 'Ville' in df.columns and 'Lat' in df.columns:
+                return df
+        except:
+            pass
+    villes_defaut.to_csv(nom_f, index=False)
+    return villes_defaut
 
-if 'auth' not in st.session_state: st.session_state.auth = False
+# --- INITIALISATION ---
+if 'connecte' not in st.session_state:
+    st.session_state.connecte = False
+    st.session_state.user_ville = ""
+    st.session_state.user_role = ""
 
-if not st.session_state.auth:
-    st.title("🔐 Connexion SODEXAM")
-    with st.form("login_form"):
-        u = st.text_input("Identifiant")
-        p = st.text_input("Mot de passe", type="password")
-        if st.form_submit_button("Se connecter"):
-            df_u = pd.read_csv(DB_USERS)
-            user_row = df_u[(df_u['login'] == u) & (df_u['password'] == p)]
-            if not user_row.empty:
-                st.session_state.auth = True
-                st.session_state.user = u
-                st.session_state.role = user_row.iloc[0]['role']
-                st.session_state.ville_user = user_row.iloc[0]['ville']
-                st.rerun()
-            else: st.error("Identifiants incorrects.")
-    st.stop()
-
-# ==========================================
-# 4. BARRE LATÉRALE
-# ==========================================
-with st.sidebar:
-    logo_b64 = get_base64(LOGO_NOM)
-    if logo_b64:
-        st.markdown(f'<div style="text-align:center;"><img src="data:image/png;base64,{logo_b64}" width="150"></div>', unsafe_allow_html=True)
+# --- ÉCRAN DE CONNEXION ---
+def ecran_connexion():
+    st.markdown("<h1 style='text-align: center; color: #004a99;'>SODEXAM</h1>", unsafe_allow_html=True)
+    st.subheader("Connexion au Réseau National de Pluviométrie")
     
-    st.title("Navigation")
-    if st.session_state.role == 'admin':
-        menu = st.radio("Aller vers :", ["🌍 Carte de Côte d'Ivoire", "✍️ Saisie des Relevés", "👥 Gestion des Comptes", "🛠️ Nettoyage des Tests"])
-    else:
-        menu = "✍️ Saisie des Relevés"
-
-    if st.button("🚪 Déconnexion"):
-        st.session_state.auth = False
-        st.rerun()
-
-# ==========================================
-# 5. LOGIQUE DES MENUS
-# ==========================================
-
-# --- MENU : CARTE NATIONALE ---
-if menu == "🌍 Carte de Côte d'Ivoire":
-    st.header("📊 Situation Pluviométrique Nationale")
-    df_total = charger_toutes_villes()
-    
-    if not df_total.empty:
-        df_total['Date'] = pd.to_datetime(df_total['Date'], dayfirst=True)
-        dates_dispo = sorted(df_total['Date'].dt.date.unique(), reverse=True)
-        date_sel = st.selectbox("📅 Sélectionner la date à afficher", dates_dispo)
-        
-        df_jour = df_total[df_total['Date'].dt.date == date_sel]
-        
-        # Création de la carte
-        m = folium.Map(location=[7.54, -5.55], zoom_start=7, tiles="OpenStreetMap")
-        
-        for _, row in df_jour.iterrows():
-            ville_nom = str(row['Ville']).lower().strip()
-            pluie = row['Pluie_mm']
-            orage = "⚡ Oui" if row['Orage'] == 1 else "Non"
+    col1, col2, col3 = st.columns([1,2,1])
+    with col2:
+        with st.form("form_login"):
+            id_user = st.text_input("Identifiant")
+            mdp_user = st.text_input("Mot de passe", type="password")
+            valider = st.form_submit_button("Se connecter", use_container_width=True)
             
-            if ville_nom in VILLES_COORDS:
-                coord = VILLES_COORDS[ville_nom]
-                # Couleur selon intensité
-                couleur = "red" if pluie > 20 else "blue" if pluie > 0 else "green"
+            if valider:
+                users = charger_utilisateurs()
+                # Nettoyage des espaces pour éviter les erreurs de frappe
+                users['identifiant'] = users['identifiant'].astype(str).str.strip()
+                user = users[(users['identifiant'] == id_user.strip()) & (users['mot_de_passe'].astype(str) == mdp_user.strip())]
                 
-                folium.CircleMarker(
-                    location=coord,
-                    radius=8 + (pluie/5),
-                    popup=f"<b>{ville_nom.upper()}</b><br>Pluie: {pluie}mm<br>Orage: {orage}",
-                    color=couleur,
-                    fill=True,
-                    fill_opacity=0.7
-                ).add_to(m)
-        
-        st_folium(m, width=1000, height=600)
-        st.info("🟢 Vert: Sec | 🔵 Bleu: Pluie | 🔴 Rouge: Forte Pluie (>20mm)")
-    else:
-        st.warning("Aucune donnée enregistrée pour le moment.")
+                if not user.empty:
+                    st.session_state.connecte = True
+                    st.session_state.user_ville = user.iloc[0]['ville']
+                    st.session_state.user_role = user.iloc[0]['role']
+                    st.rerun()
+                else:
+                    st.error("Identifiants incorrects. Vérifiez l'orthographe.")
 
-# --- MENU : SAISIE & RAPPORTS ---
-elif menu == "✍️ Saisie des Relevés":
-    v_user = st.session_state.ville_user
-    if st.session_state.role == 'admin':
-        v_user = st.selectbox("Vérifier la ville de :", list(VILLES_COORDS.keys()))
-
-    st.header(f"📍 Station : {v_user.upper()}")
+# --- INTERFACE APPRÈS CONNEXION ---
+if not st.session_state.connecte:
+    ecran_connexion()
+else:
+    # Sidebar
+    st.sidebar.title("MENU")
+    if os.path.exists("app (1).png.png"):
+        st.sidebar.image("app (1).png.png")
     
-    # Formulaire de saisie
-    with st.expander("➕ Enregistrer un nouveau relevé", expanded=True):
-        with st.form("pluvio_form"):
-            col1, col2 = st.columns(2)
-            d = col1.date_input("Date du relevé")
-            h = col2.selectbox("Heure", ["08:00", "18:00", "Cumul 24h"])
-            p = col1.number_input("Précipitations (mm)", min_value=0.0, step=0.1)
-            o = col2.checkbox("Présence d'Orage")
-            e = col2.checkbox("Présence d'Éclairs")
-            
-            if st.form_submit_button("✅ Valider et Enregistrer"):
-                df_v = charger_donnees_ville(v_user)
-                nouveau = pd.DataFrame([{
-                    'Date': d.strftime("%d/%m/%Y"), 'Heure': h, 'Ville': v_user.upper(),
-                    'Pluie_mm': p, 'Orage': 1 if o else 0, 'Eclair': 1 if e else 0
-                }])
-                chemin = os.path.join(FOLDER_DATA, f"{v_user.upper()}_data.csv")
-                nouveau.to_csv(chemin, mode='a', header=not os.path.exists(chemin), index=False)
-                st.success("Donnée enregistrée en local !")
-                st.rerun()
-
-    # Affichage du tableau local
-    df_v = charger_donnees_ville(v_user)
-    if not df_v.empty:
-        st.subheader("Historique des relevés")
-        st.dataframe(df_v, use_container_width=True)
-        
-        # Bouton Mail
-        if st.button("📧 Envoyer ce rapport à la Direction"):
-            try:
-                buf = io.BytesIO()
-                with pd.ExcelWriter(buf, engine='openpyxl') as writer: df_v.to_excel(writer, index=False)
-                msg = MIMEMultipart()
-                msg['Subject'] = f"PLUVIO SODEXAM - {v_user.upper()} - {datetime.now().strftime('%d/%m/%Y')}"
-                msg.attach(MIMEText(f"Veuillez trouver ci-joint le relevé pour la station de {v_user}."))
-                part = MIMEApplication(buf.getvalue(), Name=f"Releve_{v_user}.xlsx")
-                part['Content-Disposition'] = f'attachment; filename="Releve_{v_user}.xlsx"'
-                msg.attach(part)
-                # Connexion SMTP (A configurer avec tes accès)
-                st.info("Configuration SMTP requise pour l'envoi réel.")
-            except Exception as ex: st.error(f"Erreur : {ex}")
-
-# --- MENU : GESTION ADMIN ---
-elif menu == "👥 Gestion des Comptes":
-    st.header("⚙️ Administration des accès")
-    df_u = pd.read_csv(DB_USERS)
-    st.dataframe(df_u)
+    st.sidebar.info(f"Ville : {st.session_state.user_ville}\nRôle : {st.session_state.user_role}")
     
-    with st.form("add_user"):
-        st.write("Ajouter un agent")
-        nl = st.text_input("Identifiant (ex: agent_man)")
-        np = st.text_input("Mot de passe")
-        nv = st.selectbox("Ville assignée", list(VILLES_COORDS.keys()))
-        if st.form_submit_button("Créer le compte"):
-            new_u = pd.DataFrame([{'login': nl, 'password': np, 'role': 'user', 'ville': nv.upper()}])
-            pd.concat([df_u, new_u]).to_csv(DB_USERS, index=False)
-            st.success("Compte créé !") ; st.rerun()
-
-elif menu == "🛠️ Nettoyage des Tests":
-    st.header("🛠️ Suppression des données de test")
-    v_clean = st.selectbox("Sélectionner la ville à nettoyer", [f.replace("_data.csv","") for f in os.listdir(FOLDER_DATA)])
-    if st.button("🔥 SUPPRIMER TOUTES LES DONNÉES DE CETTE VILLE"):
-        os.remove(os.path.join(FOLDER_DATA, f"{v_clean}_data.csv"))
-        st.success("Fichier supprimé. La ville est remise à zéro.")
+    option = st.sidebar.radio("Navigation", ["Carte Nationale", "Saisie Journalière", "Historique & Suppression", "Admin (Gestion)"])
+    
+    if st.sidebar.button("Déconnexion"):
+        st.session_state.connecte = False
         st.rerun()
+
+    # 1. CARTE NATIONALE
+    if option == "Carte Nationale":
+        st.header("📍 État du Réseau")
+        villes_df = charger_villes_coords()
+        m = folium.Map(location=[7.5399, -5.5471], zoom_start=7)
+        
+        for _, v in villes_df.iterrows():
+            path = f"Donnees_Villes/{v['Ville']}.csv"
+            color = "blue"
+            popup_txt = f"<b>{v['Ville']}</b><br>Aucune donnée"
+            
+            if os.path.exists(path):
+                data = pd.read_csv(path)
+                if not data.empty:
+                    val = data.iloc[-1]['Pluie (mm)']
+                    popup_txt = f"<b>{v['Ville']}</b><br>Dernier relevé: {val} mm"
+                    color = "green" if val < 50 else "red"
+            
+            folium.Marker([v['Lat'], v['Lon']], popup=popup_txt, icon=folium.Icon(color=color)).add_to(m)
+        
+        st_folium(m, width="100%", height=550)
+
+    # 2. SAISIE DES DONNÉES
+    elif option == "Saisie Journalière":
+        st.header(f"Saisie pour {st.session_state.user_ville}")
+        with st.form("saisie_pluie"):
+            date_p = st.date_input("Date", datetime.now())
+            valeur = st.number_input("Pluviométrie (mm)", min_value=0.0, step=0.1)
+            obs = st.text_area("Observations")
+            if st.form_submit_button("Enregistrer"):
+                f_path = f"Donnees_Villes/{st.session_state.user_ville}.csv"
+                new_row = pd.DataFrame({"Date": [date_p], "Pluie (mm)": [valeur], "Observations": [obs]})
+                if os.path.exists(f_path):
+                    new_row.to_csv(f_path, mode='a', header=False, index=False)
+                else:
+                    new_row.to_csv(f_path, index=False)
+                st.success("Donnée enregistrée avec succès !")
+
+    # 3. HISTORIQUE AVEC CASES À COCHER POUR SUPPRESSION
+    elif option == "Historique & Suppression":
+        st.header(f"Historique de {st.session_state.user_ville}")
+        f_path = f"Donnees_Villes/{st.session_state.user_ville}.csv"
+        
+        if os.path.exists(f_path):
+            df = pd.read_csv(f_path)
+            if not df.empty:
+                st.write("Cochez les lignes pour les supprimer :")
+                df_edit = df.copy()
+                df_edit.insert(0, "Sélection", False)
+                
+                edited = st.data_editor(df_edit, hide_index=True, use_container_width=True,
+                                      column_config={"Sélection": st.column_config.CheckboxColumn(required=True)})
+                
+                if st.button("❌ Supprimer la sélection"):
+                    df_final = edited[edited["Sélection"] == False].drop(columns=["Sélection"])
+                    df_final.to_csv(f_path, index=False)
+                    st.success("Mise à jour effectuée !")
+                    st.rerun()
+            else:
+                st.info("Aucune donnée.")
+        else:
+            st.info("Le fichier n'existe pas encore.")
+
+    # 4. GESTION ADMIN (Ajout de villes et utilisateurs)
+    elif option == "Admin (Gestion)":
+        if st.session_state.user_role != "admin":
+            st.error("Réservé à l'Admin.")
+        else:
+            st.subheader("Ajouter une ville ou une sous-préfecture")
+            with st.form("new_user"):
+                new_id = st.text_input("Identifiant Agent")
+                new_mdp = st.text_input("Mot de passe")
+                new_v = st.text_input("Nom de la Ville")
+                n_lat = st.number_input("Latitude", format="%.4f")
+                n_lon = st.number_input("Longitude", format="%.4f")
+                
+                if st.form_submit_button("Créer le compte et la ville"):
+                    # Maj utilisateurs
+                    u_df = charger_utilisateurs()
+                    u_new = pd.DataFrame({"identifiant": [new_id], "mot_de_passe": [new_mdp], "ville": [new_v], "role": ["agent"]})
+                    pd.concat([u_df, u_new]).to_csv("utilisateurs.csv", index=False)
+                    # Maj coordonnées
+                    v_df = charger_villes_coords()
+                    v_new = pd.DataFrame({"Ville": [new_v], "Lat": [n_lat], "Lon": [n_lon]})
+                    pd.concat([v_df, v_new]).drop_duplicates(subset="Ville").to_csv("villes_ci.csv", index=False)
+                    st.success(f"Ville {new_v} ajoutée au réseau !")
