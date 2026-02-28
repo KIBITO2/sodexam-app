@@ -5,7 +5,7 @@ from streamlit_folium import st_folium
 import os
 import zipfile
 import smtplib
-from datetime import datetime
+from datetime import datetime, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
@@ -14,41 +14,48 @@ from email import encoders
 # --- CONFIGURATION DE LA PAGE ---
 st.set_page_config(page_title="SODEXAM - Gestion Pluviométrique", layout="wide", page_icon="🌧️")
 
-# Création des dossiers
 if not os.path.exists("Donnees_Villes"):
     os.makedirs("Donnees_Villes")
+
+# --- LOGIQUE SYNOPTIQUE (18h + 08h) ---
+def calculer_journee_meteo(df):
+    if df.empty: return df
+    df = df.copy()
+    df['Date_Heure'] = pd.to_datetime(df['Date_Heure'])
+    # Règle : Après 18h, le relevé compte pour le lendemain
+    df['Jour_Meteo'] = df.apply(
+        lambda x: (x['Date_Heure'].date() + timedelta(days=1)) if x['Date_Heure'].hour >= 18 
+        else x['Date_Heure'].date(), axis=1
+    )
+    return df
 
 # --- FONCTIONS TECHNIQUES ---
 def charger_utilisateurs():
     nom_f = "utilisateurs.csv"
     if os.path.exists(nom_f):
-        try:
-            df = pd.read_csv(nom_f, sep=None, engine='python')
-            if 'identifiant' in df.columns: return df
+        try: return pd.read_csv(nom_f)
         except: pass
-    df_admin = pd.DataFrame({"identifiant": ["admin"], "mot_de_passe": ["admin123"], "ville": ["Abidjan"], "role": ["admin"]})
-    df_admin.to_csv(nom_f, index=False)
-    return df_admin
+    df = pd.DataFrame({"identifiant": ["admin"], "mot_de_passe": ["admin123"], "ville": ["Abidjan"], "role": ["admin"]})
+    df.to_csv(nom_f, index=False)
+    return df
 
 def charger_villes_coords():
     nom_f = "villes_ci.csv"
     if os.path.exists(nom_f):
-        try:
-            df = pd.read_csv(nom_f, sep=None, engine='python')
-            if 'Ville' in df.columns: return df
+        try: return pd.read_csv(nom_f)
         except: pass
-    df_v = pd.DataFrame({"Ville": ["Abidjan"], "Lat": [5.309], "Lon": [-4.012]})
-    df_v.to_csv(nom_f, index=False)
-    return df_v
+    df = pd.DataFrame({"Ville": ["Abidjan"], "Lat": [5.309], "Lon": [-4.012]})
+    df.to_csv(nom_f, index=False)
+    return df
 
 def envoyer_email_archive(destinataire, fichier_zip):
-    expediteur = "votre_email@gmail.com" 
-    mot_de_passe = "votre_code_application" 
+    expediteur = "lateseraphinkone@gmail.com" 
+    mot_de_passe = "wdgu cdog ddjp gxlw" 
     msg = MIMEMultipart()
     msg['From'] = expediteur
     msg['To'] = destinataire
-    msg['Subject'] = f"SODEXAM - Rapport Hebdo {datetime.now().strftime('%d/%m/%Y')}"
-    msg.attach(MIMEText("Archive des relevés hebdomadaires ci-jointe.", 'plain'))
+    msg['Subject'] = f"SODEXAM - Rapport Pluviométrique {datetime.now().strftime('%d/%m/%Y')}"
+    msg.attach(MIMEText("Archive des relevés jointe.", 'plain'))
     with open(fichier_zip, "rb") as attachment:
         part = MIMEBase('application', 'octet-stream')
         part.set_payload(attachment.read())
@@ -61,16 +68,12 @@ def envoyer_email_archive(destinataire, fichier_zip):
     server.send_message(msg)
     server.quit()
 
-# --- SESSION ---
+# --- AUTHENTIFICATION ---
 if 'connecte' not in st.session_state:
     st.session_state.connecte = False
-    st.session_state.user_role = ""
-    st.session_state.user_ville = ""
-    st.session_state.save_success = False
 
-# --- CONNEXION ---
 if not st.session_state.connecte:
-    st.markdown("<h1 style='text-align: center; color: #004a99;'>SODEXAM</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='text-align: center; color: #004a99;'>SODEXAM - SYSTÈME PLUVIO</h1>", unsafe_allow_html=True)
     with st.container(border=True):
         u = st.text_input("Identifiant")
         p = st.text_input("Mot de passe", type="password")
@@ -84,145 +87,118 @@ if not st.session_state.connecte:
                 st.rerun()
             else: st.error("Identifiants incorrects.")
 else:
-    # --- BARRE LATÉRALE ---
-    st.sidebar.title("SODEXAM")
+    # --- BARRE LATÉRALE AVEC LOGO ---
     if os.path.exists("logo.png"):
         st.sidebar.image("logo.png", use_container_width=True)
     else:
-        st.sidebar.warning("Logo introuvable")
-
-    options = ["Carte Nationale", "Saisie Relevé", "Historique"]
-    if st.session_state.user_role == "admin":
-        options.insert(1, "📊 Dashboard Admin")
-        options.append("⚙️ Gestion Comptes")
+        st.sidebar.markdown("<h2 style='color: #004a99;'>SODEXAM</h2>", unsafe_allow_html=True)
     
-    choix = st.sidebar.radio("Menu", options)
+    st.sidebar.write(f"📍 Station: **{st.session_state.user_ville}**")
+    
+    menu = ["Carte Nationale", "Saisie Relevé", "Historique"]
+    if st.session_state.user_role == "admin":
+        menu.insert(1, "📊 Dashboard Admin")
+        menu.append("⚙️ Gestion Comptes")
+    
+    choix = st.sidebar.radio("Navigation", menu)
     if st.sidebar.button("Déconnexion"):
         st.session_state.connecte = False
         st.rerun()
 
     # --- 1. CARTE ---
     if choix == "Carte Nationale":
-        st.header("📍 État du Réseau National")
+        st.header("📍 État du Réseau")
         villes_df = charger_villes_coords()
-        m = folium.Map(location=[7.5399, -5.5471], zoom_start=7)
+        m = folium.Map(location=[7.5, -5.5], zoom_start=7)
         for _, v in villes_df.iterrows():
             path = f"Donnees_Villes/{v['Ville']}.csv"
-            color, info = "blue", f"<b>{v['Ville']}</b>"
-            if os.path.exists(path):
-                df_v = pd.read_csv(path)
-                if not df_v.empty:
-                    der = df_v.iloc[-1]
-                    color = "green" if der['Pluie (mm)'] < 50 else "red"
-                    info += f"<br>Le {der['Date_Heure']}<br>Pluie: {der['Pluie (mm)']} mm"
-            folium.Marker([v['Lat'], v['Lon']], popup=folium.Popup(info, max_width=200), icon=folium.Icon(color=color)).add_to(m)
+            color = "blue"
+            if os.path.exists(path): color = "green"
+            folium.Marker([v['Lat'], v['Lon']], popup=v['Ville'], icon=folium.Icon(color=color)).add_to(m)
         st_folium(m, width="100%", height=500)
 
-    # --- 2. DASHBOARD ADMIN ---
+    # --- 2. DASHBOARD ADMIN (MASSE D'EAU) ---
     elif choix == "📊 Dashboard Admin":
-        st.header("📊 Supervision & Archivage")
+        st.header("📊 Masse d'eau Mensuelle (Règle 18h+08h)")
         fichiers = [f for f in os.listdir("Donnees_Villes") if f.endswith(".csv")]
         if fichiers:
-            all_dfs = [pd.read_csv(f"Donnees_Villes/{f}").assign(Ville=f.replace(".csv","")) for f in fichiers]
-            df_glob = pd.concat(all_dfs).sort_values(by="Date_Heure", ascending=False)
-            st.dataframe(df_glob, use_container_width=True)
+            df_glob = pd.concat([pd.read_csv(f"Donnees_Villes/{f}").assign(Ville=f.replace(".csv","")) for f in fichiers])
+            df_meteo = calculer_journee_meteo(df_glob)
             
-            st.divider()
-            dest = st.text_input("Email Destination", "direction@sodexam.ci")
-            c1, c2 = st.columns(2)
-            if c1.button("📨 Envoyer Archive ZIP", use_container_width=True, type="primary"):
-                nom_zip = f"Archive_{datetime.now().strftime('%d-%m-%Y')}.zip"
+            stats = []
+            for ville in df_meteo['Ville'].unique():
+                df_v = df_meteo[df_meteo['Ville'] == ville]
+                jours = df_v.groupby('Jour_Meteo')['Pluie (mm)'].sum().reset_index()
+                stats.append({
+                    "Zone": ville,
+                    "Masse Totale (mm)": round(jours['Pluie (mm)'].sum(), 2),
+                    "Max Journalier": round(jours['Pluie (mm)'].max(), 2)
+                })
+            st.table(pd.DataFrame(stats).sort_values("Masse Totale (mm)", ascending=False))
+            
+            dest = st.text_input("Envoyer à:", "direction@sodexam.ci")
+            if st.button("📨 Envoyer Archive ZIP"):
+                nom_zip = f"Archive_{datetime.now().strftime('%Y%m%d')}.zip"
                 with zipfile.ZipFile(nom_zip, 'w') as z:
                     for f in fichiers: z.write(os.path.join("Donnees_Villes", f), f)
-                try:
-                    envoyer_email_archive(dest, nom_zip)
-                    st.session_state.save_success = True
-                    st.success("Mail envoyé !")
-                except Exception as e: st.error(f"Erreur: {e}")
-            if c2.button("🗑️ Purger le système", use_container_width=True, disabled=not st.session_state.save_success):
-                for f in fichiers: os.remove(os.path.join("Donnees_Villes", f))
-                st.session_state.save_success = False
-                st.success("Données purgées.")
-                st.rerun()
+                envoyer_email_archive(dest, nom_zip)
+                st.success("Envoyé !")
         else: st.info("Aucune donnée.")
 
-    # --- 3. SAISIE RELEVÉ (AVEC PHÉNOMÈNES MÉTÉO) ---
+    # --- 3. SAISIE RELEVÉ (MULTI-SÉLECTION) ---
     elif choix == "Saisie Relevé":
-        st.header(f"Saisie Station : {st.session_state.user_ville}")
+        st.header(f"Saisie : {st.session_state.user_ville}")
         with st.form("form_saisie"):
-            d = st.date_input("Date du relevé")
+            d = st.date_input("Date")
+            h = st.radio("Heure", ["08:00", "18:00", "Autre"], horizontal=True)
+            p = st.number_input("Pluviométrie (mm)", min_value=0.0)
             
-            # Heures réglementaires
-            h_type = st.radio("Type d'heure", ["Heure réglementaire (08h/18h)", "Heure personnalisée"], horizontal=True)
-            if h_type == "Heure réglementaire (08h/18h)":
-                heure_finale = st.selectbox("Sélectionnez l'heure de collecte", ["08:00", "18:00"])
-            else:
-                heure_finale = st.time_input("Choisir une heure précise").strftime('%H:%M')
-
-            p = st.number_input("Pluviométrie (mm)", min_value=0.0, step=0.1)
+            st.markdown("### ☁️ Phénomènes observés")
+            # MULTI-SÉLECTION ICI
+            phens = st.multiselect("Sélectionnez les phénomènes", 
+                                  ["🌧️ Pluie", "⚡ Éclairs", "⛈️ Orage", "🌫️ Brouillard", "💨 Vent fort", "☀️ Ensoleillé"])
             
-            st.markdown("### ⚡ Observations Phénomènes Météo")
-            col_icon, col_intensite = st.columns(2)
+            inten = st.select_slider("Intensité", ["Faible", "Modérée", "Forte", "Violente"])
             
-            phenomene = col_icon.selectbox("Icône Phénomène", 
-                ["Pas de phénomène", "🌧️ Pluie", "⚡ Éclairs", "⛈️ Orage", "🌫️ Brouillard", "💨 Vent fort"])
+            c1, c2 = st.columns(2)
+            h_d = c1.text_input("Heure début (HH:MM)")
+            h_f = c2.text_input("Heure fin (HH:MM)")
             
-            intensite = col_intensite.select_slider("Intensité du phénomène", 
-                options=["Faible", "Modérée", "Forte", "Violente"])
+            notes = st.text_area("Notes complémentaires")
             
-            col_debut, col_fin = st.columns(2)
-            h_debut = col_debut.text_input("Heure début (ex: 14:10)", value="--:--")
-            h_fin = col_fin.text_input("Heure fin (ex: 15:30)", value="--:--")
-            
-            detail_obs = st.text_area("Notes complémentaires")
-            
-            if st.form_submit_button("Enregistrer le relevé"):
-                # Formatage de l'observation
-                obs_complete = f"[{phenomene}] Intensité: {intensite} | Début: {h_debut} | Fin: {h_fin} | Note: {detail_obs}"
-                
+            if st.form_submit_button("Enregistrer"):
+                obs_final = f"[{', '.join(phens)}] Intensité: {inten} | De {h_d} à {h_f} | Obs: {notes}"
                 path = f"Donnees_Villes/{st.session_state.user_ville}.csv"
-                timestamp = f"{d} {heure_finale}"
-                new_row = pd.DataFrame({"Date_Heure": [timestamp], "Pluie (mm)": [p], "Observations": [obs_complete]})
-                
-                if os.path.exists(path): new_row.to_csv(path, mode='a', header=False, index=False)
-                else: new_row.to_csv(path, index=False)
-                st.success(f"Relevé météo enregistré !")
+                df_new = pd.DataFrame({"Date_Heure": [f"{d} {h}"], "Pluie (mm)": [p], "Observations": [obs_final]})
+                df_new.to_csv(path, mode='a', header=not os.path.exists(path), index=False)
+                st.success("Relevé enregistré !")
 
-    # --- 4. HISTORIQUE & CORRECTION ---
+    # --- 4. HISTORIQUE ---
     elif choix == "Historique":
+        st.header("📚 Historique")
+        ville = st.session_state.user_ville
         if st.session_state.user_role == "admin":
-            st.header("📚 Correction & Historique Global")
-            fichiers = [f for f in os.listdir("Donnees_Villes") if f.endswith(".csv")]
-            if fichiers:
-                ville_select = st.selectbox("Ville à corriger", [f.replace(".csv","") for f in fichiers])
-                path_c = f"Donnees_Villes/{ville_select}.csv"
-                df_c = pd.read_csv(path_c)
-                st.write("Modifiez les cellules puis sauvegardez :")
-                df_edite = st.data_editor(df_c, use_container_width=True, num_rows="dynamic")
-                if st.button("💾 Sauvegarder les corrections"):
-                    df_edite.to_csv(path_c, index=False)
-                    st.success(f"Données de {ville_select} mises à jour !")
-            else: st.info("Aucune donnée.")
-        else:
-            st.header(f"Mon Historique ({st.session_state.user_ville})")
-            path = f"Donnees_Villes/{st.session_state.user_ville}.csv"
-            if os.path.exists(path):
-                df = pd.read_csv(path)
-                st.dataframe(df, use_container_width=True)
-            else: st.info("Aucun historique.")
+            f_list = [f.replace(".csv","") for f in os.listdir("Donnees_Villes") if f.endswith(".csv")]
+            ville = st.selectbox("Zone", f_list)
+        
+        path_h = f"Donnees_Villes/{ville}.csv"
+        if os.path.exists(path_h):
+            df_h = pd.read_csv(path_h)
+            st.data_editor(df_h, use_container_width=True)
+        else: st.info("Pas de données.")
 
     # --- 5. GESTION COMPTES ---
     elif choix == "⚙️ Gestion Comptes":
-        st.header("Gestion du Réseau")
+        st.header("⚙️ Paramétrage")
         u_df = charger_utilisateurs()
-        st.dataframe(u_df[['identifiant', 'ville', 'role']], use_container_width=True)
-        with st.form("add_user"):
+        st.dataframe(u_df, use_container_width=True)
+        with st.form("add_u"):
+            st.write("Ajouter une station")
             c1, c2 = st.columns(2)
-            id_n, pw_n = c1.text_input("Identifiant"), c1.text_input("Mot de passe")
-            vi_n, la_n, lo_n = c2.text_input("Ville"), c2.number_input("Lat", format="%.4f"), c2.number_input("Lon", format="%.4f")
-            if st.form_submit_button("Ajouter Station"):
-                pd.concat([u_df, pd.DataFrame({"identifiant":[id_n],"mot_de_passe":[pw_n],"ville":[vi_n],"role":["agent"]})]).to_csv("utilisateurs.csv", index=False)
+            nid, npw = c1.text_input("Identifiant"), c1.text_input("Pass")
+            nvi, nla, nlo = c2.text_input("Ville"), c2.number_input("Lat"), c2.number_input("Lon")
+            if st.form_submit_button("Créer"):
+                pd.concat([u_df, pd.DataFrame({"identifiant":[nid],"mot_de_passe":[npw],"ville":[nvi],"role":["agent"]})]).to_csv("utilisateurs.csv", index=False)
                 v_df = charger_villes_coords()
-                pd.concat([v_df, pd.DataFrame({"Ville":[vi_n],"Lat":[la_n],"Lon":[lo_n]})]).to_csv("villes_ci.csv", index=False)
-                st.success("Compte créé.")
+                pd.concat([v_df, pd.DataFrame({"Ville":[nvi],"Lat":[nla],"Lon":[nlon]})]).to_csv("villes_ci.csv", index=False)
                 st.rerun()
