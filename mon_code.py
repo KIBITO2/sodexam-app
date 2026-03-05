@@ -9,9 +9,15 @@ st.set_page_config(page_title="SODEXAM", layout="wide")
 # On utilise une méthode de lecture plus simple
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-def charger_donnees(nom_onglet):
-    # Cette fonction va tenter de lire l'onglet par son nom
-    return conn.read(worksheet=nom_onglet, ttl="0")
+def charger_donnees(gid):
+    # Remplacez l'ID par celui de votre fichier
+    sheet_id = "1PFItL4NQypSkGzriUN6amTfd78T9lIeW9urNCUR8Pwg"
+    url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}"
+    return pd.read_csv(url)
+
+# Dans votre code de login, utilisez le GID (l'identifiant de l'onglet)
+# Le GID se trouve à la fin de l'URL quand vous cliquez sur l'onglet dans votre navigateur
+# Exemple : gid=0 pour le premier, gid=123456 pour le second
 
 # --- AUTHENTIFICATION ---
 if 'connecte' not in st.session_state:
@@ -63,3 +69,4 @@ else:
         st.dataframe(df)
     except:
         st.error("Impossible de charger les relevés.")
+
