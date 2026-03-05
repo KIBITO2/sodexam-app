@@ -51,8 +51,8 @@ def charger_toutes_donnees():
 
 def envoyer_email_archive(destinataire, fichier_zip, periode_str):
     # --- CONFIGURATION GMAIL (A REMPLIR) ---
-    expediteur = "votre_mail@gmail.com" 
-    mot_de_passe_app = "votre_code_16_lettres" 
+    expediteur = "lateseraphinkone@gmail.com" 
+    mot_de_passe_app = "wdgu cdog ddjp gxlw" 
     
     msg = MIMEMultipart()
     msg['From'] = expediteur; msg['To'] = destinataire
@@ -137,7 +137,7 @@ else:
             d = c1.date_input("Date")
             h = c1.selectbox("Heure", ["08:00", "18:00", "Spécial"])
             p = c2.number_input("Pluie (mm)", min_value=0.0, step=0.1)
-            ph = c2.multiselect("Phénomènes", ["Orage", "Vent Fort", "Brume", "Brouillard", "Rosée"])
+            ph = c2.multiselect("Phénomènes", ["Orage", "éclair", "pluie faible", "pluie modérée", "pluie forte","grêle", "Brouillard", "Rosée"])
             obs = st.text_area("Observations")
             if st.form_submit_button("Enregistrer"):
                 path = f"Donnees_Villes/{st.session_state.user_ville}.csv"
@@ -200,4 +200,5 @@ else:
                 st.plotly_chart(px.bar(df_p.groupby('Ville')['Pluie (mm)'].sum().reset_index(), x='Ville', y='Pluie (mm)', color='Ville', title="Cumul Total"), use_container_width=True)
                 
             else: st.warning("Sélectionnez une ville.")
+
         else: st.info("Aucune donnée pour les graphiques.")
