@@ -1,61 +1,84 @@
 import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
-import plotly.express as px
 
-# 1. Configuration de la page
-st.set_page_config(page_title="SODEXAM - ClimatoPluvio", layout="wide")
+# --- CONFIGURATION DE LA PAGE ---
+st.set_page_config(page_title="SODEXAM - Gestion Pluviométrique", layout="wide")
 
-# 2. Connexion au Google Sheet (utilise l'URL mis dans les Secrets)
+st.title("🌧️ SODEXAM : Système de Collecte (Climato)")
+st.markdown("---")
+
+# --- CONNEXION AU GOOGLE SHEET ---
+# Note : Assurez-vous que l'onglet s'appelle exactement 'relevés' dans Google Sheets
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# 3. Chargement des données
 try:
-    df_releves = conn.read(worksheet="relevés")
-    df_users = conn.read(worksheet="utilisateurs")
-except:
-    st.error("Erreur de connexion au Google Sheet. Vérifiez vos Secrets Streamlit.")
+    # Lecture des données existantes
+    df = conn.read(worksheet="relevés")
+except Exception as e:
+    st.error("⚠️ Erreur de connexion au Google Sheet.")
+    st.info("Vérifiez que l'onglet en bas de votre Google Sheet s'appelle exactement : relevés")
     st.stop()
 
-st.title("🌧️ SODEXAM : Gestion des Pluies")
-
-# 4. Formulaire de Saisie (Station Abidjan par défaut)
+# --- BARRE LATÉRALE : SAISIE DES DONNÉES ---
 with st.sidebar:
     st.header("📝 Nouveau Relevé")
-    date = st.date_input("Date")
-    pluie = st.number_input("Pluie (mm)", min_value=0.0, step=0.1)
-    obs = st.text_area("Observations")
     
-    if st.button("Enregistrer sur le Cloud"):
+    # Liste des stations (vous pouvez en ajouter d'autres ici)
+    station = st.selectbox("Station", ["Abidjan", "Bouaké", "Korhogo", "San-Pédro", "Man"])
+    
+    # Coordonnées automatiques pour Surfer 13
+    coords = {
+        "Abidjan": [5.3364, -4.0267],
+        "Bouaké": [7.6939, -5.0303],
+        "Korhogo": [9.4580, -5.6290],
+        "San-Pédro": [4.7485, -6.6363],
+        "Man": [7.4125, -7.5538]
+    }
+    
+    date_releve = st.date_input("Date du relevé")
+    valeur_pluie = st.number_input("Pluie (mm)", min_value=0.0, step=0.1, format="%.1f")
+    observation = st.text_input("Observation", "RAS")
+
+    if st.button("Enregistrer la donnée"):
         # Préparation de la nouvelle ligne
-        new_data = pd.DataFrame([{
-            "Date_Heure": str(date),
-            "Station": "Abidjan",
-            "Pluie (mm)": pluie,
-            "Obs": obs,
-            "Lat": 5.3364,
-            "Lon": -4.0267
+        lat_lon = coords.get(station, [0.0, 0.0])
+        nouvelle_ligne = pd.DataFrame([{
+            "Date_Heure": str(date_releve),
+            "Station": station,
+            "Pluie (mm)": valeur_pluie,
+            "Obs": observation,
+            "Lat": lat_lon[0],
+            "Lon": lat_lon[1]
         }])
-        # Envoi vers Google Sheets
-        updated_df = pd.concat([df_releves, new_data], ignore_index=True)
-        conn.update(worksheet="relevés", data=updated_df)
-        st.success("Donnée enregistrée dans votre Google Sheet !")
+        
+        # Mise à jour du Google Sheet
+        df_final = pd.concat([df, nouvelle_ligne], ignore_index=True)
+        conn.update(worksheet="relevés", data=df_final)
+        
+        st.success(f"✅ Donnée de {station} enregistrée !")
         st.rerun()
 
-# 5. Affichage et Export pour Surfer 13
-st.subheader("📊 Historique et Exportation GIS")
-if not df_releves.empty:
-    st.write("Cochez les lignes pour l'exportation vers Surfer 13 :")
-    df_releves.insert(0, "Sélection", False)
+# --- AFFICHAGE ET EXPORTATION POUR SURFER 13 ---
+st.subheader("📊 Visualisation des données")
+
+if not df.empty:
+    # Affichage du tableau
+    st.dataframe(df, use_container_width=True)
     
-    # Éditeur de tableau
-    edited_df = st.data_editor(df_releves, hide_index=True)
+    st.markdown("---")
+    st.subheader("🗺️ Préparation pour Surfer 13")
+    st.write("Ce bouton génère le fichier CSV (Lon, Lat, Pluie) prêt pour le Gridding.")
     
-    # Filtrer pour l'exportation
-    to_export = edited_df[edited_df["Sélection"] == True]
+    # Création du fichier spécifique pour Surfer (Format: X, Y, Z)
+    df_surfer = df[['Lon', 'Lat', 'Pluie (mm)']]
+    csv_data = df_surfer.to_csv(index=False).encode('utf-8')
     
-    if not to_export.empty:
-        csv = to_export[["Lon", "Lat", "Pluie (mm)"]].to_csv(index=False).encode('utf-8')
-        st.download_button("📥 Télécharger le fichier pour Surfer 13", data=csv, file_name="data_sodexam_surfer.csv")
+    st.download_button(
+        label="📥 Télécharger le fichier pour SURFER 13",
+        data=csv_data,
+        file_name="data_sodexam_surfer.csv",
+        mime="text/csv"
+    )
 else:
-    st.info("Aucune donnée dans le tableau Google Sheet pour le moment.")
+    st.warning("Le tableau est vide. Veuillez saisir une première donnée dans la barre latérale.")
