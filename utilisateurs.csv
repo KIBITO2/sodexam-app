@@ -1,2 +1,2 @@
-identifiant,mot_de_passe,ville,role
-admin,admin123,Abidjan,admin
+identifiant,mot_de_passe,ville,role,email
+admin,240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9,Abidjan,admin,admin@sodexam.ci
