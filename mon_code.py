@@ -63,8 +63,8 @@ COORDS_STATIONS = {
 }
 
 PHENOMENES_OPTIONS = [
-    "Orage", "Vent Fort", "vent modéré", "vent faible", "brume humide", "Brouillard", "Rosée",
-    "Grêle", "orage", "Inondation", "Sécheresse"
+    "Orage", "Vent Fort", "Brume", "Brouillard", "Rosée",
+    "Grêle", "Tornade", "Inondation", "Sécheresse"
 ]
 
 # ============================================================
@@ -159,7 +159,7 @@ def charger_utilisateurs() -> pd.DataFrame:
         "mot_de_passe": [hash_password("admin123")],
         "ville":        ["Abidjan"],
         "role":         ["admin"],
-        "email":        ["seraphin.kone@sodexam.ci"],
+        "email":        ["admin@sodexam.ci"],
     })
     df.to_csv("utilisateurs.csv", index=False)
     return df
@@ -201,8 +201,8 @@ def df_to_excel_bytes(df: pd.DataFrame) -> bytes:
 def _envoyer_pdf_email(destinataire: str, chemin_pdf: str,
                        sujet: str, corps: str) -> None:
     """Envoie un PDF par email via SMTP Gmail."""
-    expediteur       = os.environ.get("SMTP_USER", "lateseraphinkone@gmail.com")
-    mot_de_passe_app = os.environ.get("SMTP_PASS", "wdgu cdog ddjp gxlw")
+    expediteur       = os.environ.get("SMTP_USER", "votre_mail@gmail.com")
+    mot_de_passe_app = os.environ.get("SMTP_PASS", "votre_code_16_lettres")
     msg = MIMEMultipart()
     msg["From"]    = expediteur
     msg["To"]      = destinataire
@@ -224,8 +224,8 @@ def _envoyer_pdf_email(destinataire: str, chemin_pdf: str,
 
 def envoyer_email_archive(destinataire: str, fichier_zip: str, periode_str: str) -> bool:
     # ⚠️  Remplissez ces variables dans vos secrets Streamlit ou variables d'env
-    expediteur       = os.environ.get("SMTP_USER", "lateseraphinkone@gmail.com")
-    mot_de_passe_app = os.environ.get("SMTP_PASS", "wdgu cdog ddjp gxlw")
+    expediteur       = os.environ.get("SMTP_USER", "votre_mail@gmail.com")
+    mot_de_passe_app = os.environ.get("SMTP_PASS", "votre_code_16_lettres")
     msg = MIMEMultipart()
     msg["From"]    = expediteur
     msg["To"]      = destinataire
@@ -457,10 +457,13 @@ else:
         with st.form("form_saisie", clear_on_submit=True):
             c1, c2 = st.columns(2)
             d  = c1.date_input("📅 Date", value=date.today())
-            h  = c1.selectbox("🕐 Heure d'observation", ["08:00", "18:00", "Spécial"])
+            h  = c1.selectbox("🕐 Heure d'observation", ["06:00", "08:00", "12:00", "18:00", "21:00", "Spécial"])
             h_spec = c1.text_input("Heure spéciale (HH:MM)", value="", disabled=(h != "Spécial"))
 
             p   = c2.number_input("🌧️ Pluie (mm)", min_value=0.0, max_value=999.9, step=0.1)
+            tmp = c2.number_input("🌡️ Température (°C)", min_value=-5.0, max_value=55.0, step=0.1, value=28.0)
+            hum = c2.number_input("💧 Humidité (%)", min_value=0, max_value=100, step=1, value=70)
+            vent = c2.number_input("🌬️ Vent (km/h)", min_value=0.0, max_value=300.0, step=0.5, value=0.0)
 
             ph  = st.multiselect("⚡ Phénomènes observés", PHENOMENES_OPTIONS)
             obs = st.text_area("📝 Observations libres", placeholder="Notes complémentaires…")
@@ -477,6 +480,9 @@ else:
                 df_new = pd.DataFrame({
                     "Date_Heure":     [f"{d} {heure_finale}"],
                     "Pluie (mm)":     [p],
+                    "Temperature (C)": [tmp],
+                    "Humidite (%)":   [hum],
+                    "Vent (km/h)":    [vent],
                     "Phenomenes":     [", ".join(ph) if ph else ""],
                     "Obs":            [obs],
                     "Saisi_par":      [st.session_state.username],
@@ -621,8 +627,12 @@ else:
 
             with col_g2:
                 # Répartition des phénomènes
-                ph_series = df_all["Phenomenes"].dropna().str.split(", ").explode()
-                ph_series = ph_series[ph_series.str.strip() != ""]
+                col_pheno = [c for c in df_all.columns if "phenom" in c.lower()]
+                if col_pheno:
+                    ph_series = df_all[col_pheno[0]].dropna().astype(str).str.split(", ").explode().str.strip()
+                else:
+                    ph_series = pd.Series(dtype='str')
+                    ph_series = ph_series[ph_series.str.strip() != ""]
                 if not ph_series.empty:
                     ph_count = ph_series.value_counts().reset_index()
                     ph_count.columns = ["Phénomène", "Nb"]
